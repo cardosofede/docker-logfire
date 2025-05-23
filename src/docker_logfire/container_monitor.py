@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 import docker
@@ -21,6 +22,7 @@ class ContainerMonitor:
         self.settings = settings
         self.client = docker.DockerClient(base_url=f"unix://{settings.docker_socket}")
         self.active_containers: set[str] = set()
+        self.executor = ThreadPoolExecutor(max_workers=1)
 
     def get_container_name(self, container: Container) -> str:
         """Extract container name without leading slash."""
@@ -63,25 +65,52 @@ class ContainerMonitor:
             logger.error(f"Failed to list containers: {e}")
             return []
 
+    def _watch_events_blocking(self) -> Any:
+        """Blocking version of event watching for thread execution."""
+        return self.client.events(filters={"type": "container"}, decode=True)  # type: ignore[no-untyped-call]
+
     async def watch_events(self, event_callback: Any) -> None:
         """Watch for container lifecycle events."""
         logger.info("Starting container event monitor")
+        
+        while True:
+            try:
+                # Run the blocking Docker events call in a thread
+                loop = asyncio.get_event_loop()
+                events_iter = await loop.run_in_executor(
+                    self.executor, self._watch_events_blocking
+                )
+                
+                # Process events (this will block in the thread)
+                await loop.run_in_executor(
+                    self.executor,
+                    self._process_events,
+                    events_iter,
+                    event_callback,
+                    loop
+                )
+                
+            except Exception as e:
+                logger.error(f"Error watching container events: {e}")
+                # Wait before retrying
+                await asyncio.sleep(5)
+                logger.info("Retrying container event monitoring...")
+    
+    def _process_events(self, events_iter: Any, event_callback: Any, loop: asyncio.AbstractEventLoop) -> None:
+        """Process events in the executor thread."""
+        for event in events_iter:
+            if event.get("status") in ["start", "stop", "die"]:
+                container_id = event.get("id", "")[:12]
+                container_name = (
+                    event.get("Actor", {}).get("Attributes", {}).get("name", "unknown")
+                )
+                status = event.get("status")
 
-        try:
-            # Watch for container events in a separate thread
-            for event in self.client.events(filters={"type": "container"}, decode=True):  # type: ignore[no-untyped-call]
-                if event.get("status") in ["start", "stop", "die"]:
-                    container_id = event.get("id", "")[:12]
-                    container_name = (
-                        event.get("Actor", {}).get("Attributes", {}).get("name", "unknown")
-                    )
-                    status = event.get("status")
+                logger.info(f"Container event: {container_name} ({container_id}) - {status}")
 
-                    logger.info(f"Container event: {container_name} ({container_id}) - {status}")
-
-                    # Notify callback about the event
-                    await asyncio.create_task(event_callback(event))
-
-        except Exception as e:
-            logger.error(f"Error watching container events: {e}")
-            raise
+                try:
+                    # Schedule the callback in the main event loop
+                    future = asyncio.run_coroutine_threadsafe(event_callback(event), loop)
+                    future.result(timeout=10)  # Wait up to 10 seconds
+                except Exception as e:
+                    logger.error(f"Error processing container event: {e}")

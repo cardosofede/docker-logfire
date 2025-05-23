@@ -8,6 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 import logfire
+from docker.models.containers import Container
 
 from .config import Settings
 from .container_monitor import ContainerMonitor
@@ -47,7 +48,7 @@ class DockerLogfire:
             try:
                 container = self.monitor.client.containers.get(container_id)
                 if self.monitor.should_monitor_container(container):
-                    task = asyncio.create_task(self.forwarder.stream_container_logs(container))
+                    task = asyncio.create_task(self.monitor_container_with_retry(container))
                     self.active_tasks.add(task)
                     task.add_done_callback(self.active_tasks.discard)
             except Exception as e:
@@ -56,6 +57,29 @@ class DockerLogfire:
         elif status in ["stop", "die"]:
             # Container stopped, log stream will end naturally
             pass
+    
+    async def monitor_container_with_retry(self, container: Container, max_retries: int = 3) -> None:
+        """Monitor container logs with retry logic."""
+        container_name = container.name.lstrip("/") if container.name else container.short_id
+        retry_count = 0
+        base_delay = 1  # Start with 1 second
+        
+        while retry_count < max_retries and self.running:
+            try:
+                await self.forwarder.stream_container_logs(container)
+                # If we reach here, streaming ended normally (container stopped)
+                break
+            except Exception as e:
+                retry_count += 1
+                if retry_count < max_retries:
+                    delay = base_delay * (2 ** retry_count)  # Exponential backoff
+                    logger.warning(
+                        f"Log streaming failed for {container_name}, retrying in {delay}s "
+                        f"(attempt {retry_count}/{max_retries}): {e}"
+                    )
+                    await asyncio.sleep(delay)
+                else:
+                    logger.error(f"Failed to stream logs for {container_name} after {max_retries} attempts")
 
     async def monitor_existing_containers(self) -> None:
         """Start monitoring all existing containers."""
@@ -65,17 +89,13 @@ class DockerLogfire:
             if self.running:
                 container_name = container.name.lstrip("/") if container.name else container.short_id
                 logger.info(f"Creating monitoring task for container: {container_name}")
-                task = asyncio.create_task(self.forwarder.stream_container_logs(container))
+                task = asyncio.create_task(self.monitor_container_with_retry(container))
                 self.active_tasks.add(task)
                 task.add_done_callback(self.active_tasks.discard)
 
     async def run_event_monitor(self) -> None:
-        """Run the event monitor in a thread to avoid blocking."""
-        loop = asyncio.get_event_loop()
-        await loop.run_in_executor(
-            self.executor,
-            lambda: asyncio.run(self.monitor.watch_events(self.handle_container_event)),
-        )
+        """Run the event monitor."""
+        await self.monitor.watch_events(self.handle_container_event)
 
     async def run(self) -> None:
         """Run the main application loop."""

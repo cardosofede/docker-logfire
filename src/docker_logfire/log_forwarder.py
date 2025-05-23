@@ -81,27 +81,33 @@ class LogForwarder:
 
             for log_line in log_stream:
                 if log_line:
-                    # Parse the log line
-                    message, extra_data = self.parse_docker_log(log_line)
+                    try:
+                        # Parse the log line
+                        message, extra_data = self.parse_docker_log(log_line)
 
-                    # Add container metadata
-                    container_image = "unknown"
-                    if container.image and container.image.tags:
-                        container_image = container.image.tags[0]
+                        # Add container metadata
+                        container_image = "unknown"
+                        if container.image and container.image.tags:
+                            container_image = container.image.tags[0]
 
-                    log_data = {
-                        "container_id": container.short_id,
-                        "container_name": container_name,
-                        "container_image": container_image,
-                        **extra_data,
-                    }
+                        log_data = {
+                            "container_id": container.short_id,
+                            "container_name": container_name,
+                            "container_image": container_image,
+                            **extra_data,
+                        }
 
-                    # Send to Logfire with container name in the data
-                    logfire.info(message, **log_data)
+                        # Send to Logfire with container name in the data
+                        logfire.info(message, **log_data)
+                    except Exception as e:
+                        # Log error but continue processing
+                        logfire.error(f"Error processing log line for {container_name}: {e}")
 
         except Exception as e:
             logger.error(f"Error streaming logs for container {container_name}: {e}")
-            raise
+            # Don't re-raise - let the task end gracefully
+        finally:
+            logfire.info(f"Log stream ended for container: {container_name}")
 
     async def handle_container_event(self, event: dict[str, Any]) -> None:
         """Handle container lifecycle events."""
