@@ -1,8 +1,6 @@
 """Configuration settings for docker-logfire."""
 
-from typing import Any
-
-from pydantic import Field, field_validator
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -17,6 +15,7 @@ class Settings(BaseSettings):
 
     # Logfire settings
     logfire_token: str = Field(..., description="Logfire API token")
+    service_name: str = Field(default="docker-logfire", description="Service name for Logfire logs")
 
     # Docker settings
     docker_socket: str = Field(default="/var/run/docker.sock", description="Path to Docker socket")

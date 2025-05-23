@@ -25,7 +25,7 @@ class DockerLogfire:
 
     def __init__(self) -> None:
         """Initialize the application."""
-        self.settings = Settings()
+        self.settings = Settings()  # type: ignore[call-arg]
         self.monitor = ContainerMonitor(self.settings)
         self.forwarder = LogForwarder(self.settings)
         self.active_tasks: set[asyncio.Task[Any]] = set()
@@ -63,6 +63,8 @@ class DockerLogfire:
 
         for container in containers:
             if self.running:
+                container_name = container.name.lstrip("/") if container.name else container.short_id
+                logger.info(f"Creating monitoring task for container: {container_name}")
                 task = asyncio.create_task(self.forwarder.stream_container_logs(container))
                 self.active_tasks.add(task)
                 task.add_done_callback(self.active_tasks.discard)

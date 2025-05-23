@@ -56,7 +56,7 @@ class ContainerMonitor:
                 f"Found {len(monitored)} containers to monitor out of {len(containers)} total"
             )
             for container in monitored:
-                logger.debug(f"Will monitor container: {self.get_container_name(container)}")
+                logger.info(f"Will monitor container: {self.get_container_name(container)}")
 
             return monitored
         except DockerException as e:
