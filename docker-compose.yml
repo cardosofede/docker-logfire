@@ -1,0 +1,38 @@
+version: '3.8'
+
+services:
+  docker-logfire:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: docker-logfire
+    environment:
+      - LOGFIRE_TOKEN=${LOGFIRE_TOKEN}
+      - EXCLUDE_CONTAINERS=docker-logfire
+      - INCLUDE_STOPPED=false
+      - LOG_LEVEL=INFO
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    restart: unless-stopped
+    networks:
+      - docker-logfire
+
+  # Example services for testing
+  nginx-example:
+    image: nginx:alpine
+    container_name: nginx-example
+    ports:
+      - "8080:80"
+    networks:
+      - docker-logfire
+
+  redis-example:
+    image: redis:alpine
+    container_name: redis-example
+    command: redis-server --loglevel verbose
+    networks:
+      - docker-logfire
+
+networks:
+  docker-logfire:
+    driver: bridge
