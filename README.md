@@ -7,14 +7,14 @@ A Docker container that streams logs from other containers on the same machine t
 docker-logfire runs as a Docker container alongside your other services and automatically:
 - Discovers running containers on the same Docker host
 - Streams their logs in real-time
-- Uses container names as service names in Logfire
+- Includes container names in log metadata for easy filtering
 - Provides centralized log aggregation and monitoring
 
 ## Features
 
 - **Automatic Container Discovery**: Detects all running containers on the Docker host
 - **Real-time Log Streaming**: Captures and forwards logs as they're generated
-- **Service Name Mapping**: Maps container names to Logfire service names for easy identification
+- **Container Metadata**: Includes container names and IDs in logs for easy filtering
 - **Low Overhead**: Minimal resource usage, designed to run alongside your services
 - **Docker Native**: Uses Docker API for reliable log collection
 
@@ -54,6 +54,7 @@ export LOGFIRE_TOKEN=your-logfire-token
 ### Environment Variables
 
 - `LOGFIRE_TOKEN` (required): Your Logfire API token
+- `SERVICE_NAME`: Service name for Logfire logs (default: "docker-logfire")
 - `EXCLUDE_CONTAINERS`: Comma-separated list of container names to exclude (default: "docker-logfire")
 - `INCLUDE_STOPPED`: Include logs from stopped containers (default: false)
 
@@ -70,6 +71,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     environment:
       - LOGFIRE_TOKEN=${LOGFIRE_TOKEN}
+      - SERVICE_NAME=docker-logfire
       - EXCLUDE_CONTAINERS=docker-logfire,prometheus,grafana
     restart: unless-stopped
 ```
@@ -80,7 +82,7 @@ services:
 2. It discovers all running containers (excluding itself and any specified exclusions)
 3. For each container, it:
    - Opens a log stream
-   - Assigns the container name as the Logfire service name
+   - Includes the container name in the log metadata
    - Forwards logs to Logfire with proper metadata and timestamps
 4. Continues monitoring for new containers and automatically starts streaming their logs
 

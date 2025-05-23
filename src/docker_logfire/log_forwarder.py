@@ -19,36 +19,29 @@ class LogForwarder:
         """Initialize the log forwarder and configure Logfire."""
         self.settings = settings
 
-        # Configure default Logfire for docker-logfire itself
+        # Configure Logfire with the configurable service name
         logfire.configure(
             token=settings.logfire_token,
-            service_name="docker-logfire",
+            service_name=settings.service_name,
             send_to_logfire=True,
         )
 
-        # Store per-container logfire instances
-        self.container_loggers: dict[str, Any] = {}
-
-    def get_container_logger(self, container_name: str) -> Any:
-        """Get or create a Logfire logger for a specific container."""
-        if container_name not in self.container_loggers:
-            # Create a new Logfire instance with the container name as the service name
-            container_logfire = logfire.configure(
-                local=True,
-                service_name=container_name,
-                token=self.settings.logfire_token,
-                send_to_logfire=True,
-            )
-            self.container_loggers[container_name] = container_logfire
-            logger.info(f"Created Logfire logger for container: {container_name}")
-
-        return self.container_loggers[container_name]
 
     def parse_docker_log(self, log_line: bytes) -> tuple[str, dict[str, Any]]:
         """Parse Docker log line and extract message and metadata."""
         try:
             # Docker logs come as bytes, decode them
             log_str = log_line.decode("utf-8").strip()
+            
+            # When using timestamps=True, Docker prepends RFC3339 timestamp
+            # Format: 2025-05-23T20:03:59.691483928Z <actual log>
+            timestamp = None
+            if log_str and len(log_str) > 30 and log_str[4] == '-' and log_str[19] == 'T':
+                # Extract timestamp and actual log message
+                parts = log_str.split(' ', 1)
+                if len(parts) == 2:
+                    timestamp = parts[0]
+                    log_str = parts[1]
 
             # Try to parse as JSON (common for structured logs)
             try:
@@ -56,12 +49,16 @@ class LogForwarder:
                 if isinstance(log_data, dict):
                     # Extract message if it exists
                     message = log_data.pop("message", log_str)
+                    if timestamp:
+                        log_data["docker_timestamp"] = timestamp
                     return message, log_data
                 else:
-                    return log_str, {}
+                    extra_data = {"docker_timestamp": timestamp} if timestamp else {}
+                    return log_str, extra_data
             except json.JSONDecodeError:
                 # Plain text log
-                return log_str, {}
+                extra_data = {"docker_timestamp": timestamp} if timestamp else {}
+                return log_str, extra_data
 
         except Exception as e:
             logger.error(f"Failed to parse log line: {e}")
@@ -70,8 +67,7 @@ class LogForwarder:
     async def stream_container_logs(self, container: Container) -> None:
         """Stream logs from a container to Logfire."""
         container_name = container.name.lstrip("/") if container.name else container.short_id
-        container_logger = self.get_container_logger(container_name)
-
+        
         logger.info(f"Starting log stream for container: {container_name}")
 
         try:
@@ -100,8 +96,8 @@ class LogForwarder:
                         **extra_data,
                     }
 
-                    # Send to Logfire
-                    container_logger.info(message, **log_data)
+                    # Send to Logfire with container name in the data
+                    logfire.info(message, **log_data)
 
         except Exception as e:
             logger.error(f"Error streaming logs for container {container_name}: {e}")
